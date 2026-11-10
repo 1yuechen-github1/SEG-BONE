@@ -1,0 +1,6 @@
+torch
+monai
+segmentation-models-pytorch
+SimpleITK
+numpy
+nnunetv2

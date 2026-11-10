@@ -1,0 +1,1 @@
+{"model": "unetpp_25d", "patch": [96, 96, 96], "epochs": 200, "batch": 2, "lr": 0.001}
