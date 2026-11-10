@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import torch
-from monai.networks.nets import AttentionUNet, DynUNet, MedNeXt, SegResNet, SwinUNETR, UNETR
-
+from monai.networks.nets import AttentionUnet, DynUNet, MedNeXt, SegResNet, SwinUNETR, UNETR
 
 def build_monai3d(name: str, patch: tuple[int, int, int]) -> torch.nn.Module:
     if name == "segresnet_d1":
         return SegResNet(spatial_dims=3, in_channels=1, out_channels=2, init_filters=16)
     if name == "attention_unet_3d":
-        return AttentionUNet(spatial_dims=3, in_channels=1, out_channels=2, channels=(16, 32, 64, 128, 256))
+        return AttentionUnet(spatial_dims=3, in_channels=1, out_channels=2, channels=(16, 32, 64, 128, 256))
     if name == "dynunet":
         return DynUNet(
             spatial_dims=3,
