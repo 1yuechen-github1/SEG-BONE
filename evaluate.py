@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import SimpleITK as sitk
 import torch
 from monai.inferers import sliding_window_inference
 
@@ -60,6 +61,14 @@ def icc31(x, y) -> float:
     return (msr - mse) / (msr + mse)
 
 
+def save_pred_nifti(pred: np.ndarray, case: Case, out_path: Path) -> None:
+    img = sitk.GetImageFromArray(pred.astype(np.uint8))
+    img.SetSpacing(tuple(float(s) for s in case.spacing))
+    img.SetOrigin(tuple(float(o) for o in case.origin))
+    img.SetDirection(tuple(float(d) for d in case.direction))
+    sitk.WriteImage(img, str(out_path))
+
+
 def evaluate(model, config: dict, cases: list[Case], out_dir: Path, device) -> list[dict]:
     name = config["model"]
     patch = tuple(config["patch"])
@@ -80,6 +89,7 @@ def evaluate(model, config: dict, cases: list[Case], out_dir: Path, device) -> l
         pred_dir = out_dir / "predictions" / name / case.split
         pred_dir.mkdir(parents=True, exist_ok=True)
         np.save(pred_dir / f"{case.case_id}.npy", pred.astype(np.uint8))
+        save_pred_nifti(pred, case, pred_dir / f"{case.case_id}.nii.gz")
     with (out_dir / f"eval_{name}.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         writer.writeheader()

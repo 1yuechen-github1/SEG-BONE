@@ -23,29 +23,39 @@ def normalize_ct(ct: np.ndarray, lower: float = 0.5, upper: float = 99.5) -> np.
 
 
 class Case:
-    def __init__(self, case_id: str, split: str, ct, mask, spacing, fg):
+    def __init__(self, case_id: str, split: str, ct, mask, spacing, fg, origin, direction):
         self.case_id = case_id
         self.split = split
         self.ct = ct if isinstance(ct, torch.Tensor) else torch.as_tensor(ct)
         self.mask = mask if isinstance(mask, torch.Tensor) else torch.as_tensor(mask)
         self.fg = fg if isinstance(fg, torch.Tensor) else torch.as_tensor(fg)
         self.spacing = np.asarray(spacing, dtype=float)
+        self.origin = np.asarray(origin, dtype=float)
+        self.direction = np.asarray(direction, dtype=float)
 
     @classmethod
     def from_dir(cls, case_dir: Path, split: str, normalize: bool = True) -> "Case":
         ct_path, mask_path = find_pair(case_dir)
         ct_img = sitk.ReadImage(str(ct_path))
         spacing = np.asarray(ct_img.GetSpacing(), dtype=float)
+        origin = np.asarray(ct_img.GetOrigin(), dtype=float)
+        direction = np.asarray(ct_img.GetDirection(), dtype=float)
         ct = sitk.GetArrayFromImage(ct_img).astype(np.float32)
         mask = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path))) > 0
         if normalize:
             ct = normalize_ct(ct)
         fg = np.argwhere(mask)
-        return cls(case_dir.name, split, ct, mask, spacing, fg)
+        return cls(case_dir.name, split, ct, mask, spacing, fg, origin, direction)
 
 
 def _cache_path(cache_dir: Path, split: str, case_id: str) -> Path:
     return cache_dir / split / f"{case_id}.pt"
+
+
+def _as_numpy(x):
+    if torch.is_tensor(x):
+        return x.detach().cpu().numpy()
+    return np.asarray(x, dtype=float)
 
 
 def _save_cache(cache_dir: Path, case: Case) -> None:
@@ -53,7 +63,14 @@ def _save_cache(cache_dir: Path, case: Case) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
-            {"ct": case.ct, "mask": case.mask, "spacing": torch.as_tensor(case.spacing), "fg": case.fg},
+            {
+                "ct": case.ct,
+                "mask": case.mask,
+                "spacing": torch.as_tensor(case.spacing),
+                "fg": case.fg,
+                "origin": torch.as_tensor(case.origin),
+                "direction": torch.as_tensor(case.direction),
+            },
             path,
         )
     except OSError as exc:
@@ -65,10 +82,10 @@ def _load_cache(cache_dir: Path, split: str, case_id: str) -> Case | None:
     if not path.exists():
         return None
     data = torch.load(path, map_location="cpu")
-    spacing = data["spacing"]
-    if torch.is_tensor(spacing):
-        spacing = spacing.cpu().numpy()
-    return Case(case_id, split, data["ct"], data["mask"], spacing, data["fg"])
+    spacing = _as_numpy(data["spacing"])
+    origin = _as_numpy(data.get("origin", [0.0, 0.0, 0.0]))
+    direction = _as_numpy(data.get("direction", [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]))
+    return Case(case_id, split, data["ct"], data["mask"], spacing, data["fg"], origin, direction)
 
 
 def load_cases(cases_root: Path, cache_dir: Path | None = None, normalize: bool = True) -> list[Case]:
@@ -97,7 +114,8 @@ def crop_or_pad(volume: torch.Tensor, center: tuple[int, int, int], patch: tuple
         for i in range(3)
     ]
     if any(pads):
-        volume = F.pad(volume, (pads[2], pads[2], pads[1], pads[1], pads[0], pads[0]), mode="replicate")
+        # replicate padding requires a >=4D tensor, so add a temporary channel dim
+        volume = F.pad(volume[None], (pads[2], pads[2], pads[1], pads[1], pads[0], pads[0]), mode="replicate")[0]
         center = tuple(c + p for c, p in zip(center, pads))
     sl = tuple(slice(center[i] - patch[i] // 2, center[i] - patch[i] // 2 + patch[i]) for i in range(3))
     return volume[sl]
