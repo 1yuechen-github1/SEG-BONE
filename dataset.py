@@ -6,6 +6,7 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
 
 def find_pair(case_dir: Path) -> tuple[Path, Path]:
@@ -73,19 +74,20 @@ def _load_cache(cache_dir: Path, split: str, case_id: str) -> Case | None:
 def load_cases(cases_root: Path, cache_dir: Path | None = None, normalize: bool = True) -> list[Case]:
     """Load all cases, using (and building) a per-case .pt cache to skip NIfTI decompression."""
     cache_dir = cache_dir or (cases_root / "_cache")
+    entries = [
+        (split, case_dir)
+        for split in ("train", "val", "test")
+        if (cases_root / split).is_dir()
+        for case_dir in sorted((cases_root / split).iterdir())
+        if case_dir.is_dir()
+    ]
     cases = []
-    for split in ("train", "val", "test"):
-        split_dir = cases_root / split
-        if not split_dir.is_dir():
-            continue
-        for case_dir in sorted(split_dir.iterdir()):
-            if not case_dir.is_dir():
-                continue
-            case = _load_cache(cache_dir, split, case_dir.name)
-            if case is None:
-                case = Case.from_dir(case_dir, split, normalize)
-                _save_cache(cache_dir, case)
-            cases.append(case)
+    for split, case_dir in tqdm(entries, desc="load cases", ncols=100):
+        case = _load_cache(cache_dir, split, case_dir.name)
+        if case is None:
+            case = Case.from_dir(case_dir, split, normalize)
+            _save_cache(cache_dir, case)
+        cases.append(case)
     return cases
 
 
