@@ -23,22 +23,28 @@ def predict_volume(model, case: Case, name: str, patch: tuple[int, int, int], de
                 if channels == 1:
                     plane = case.ct[z][None]
                 else:
-                    plane = np.stack([case.ct[max(0, z - 1)], case.ct[z], case.ct[min(case.ct.shape[0] - 1, z + 1)]])
+                    plane = torch.stack([case.ct[max(0, z - 1)], case.ct[z], case.ct[min(case.ct.shape[0] - 1, z + 1)]])
                 slices.append(plane)
-            batch = torch.from_numpy(np.stack(slices)[:, None]).float().to(device)
+            batch = torch.stack(slices)[:, None].float().to(device)
             probs = []
             for i in range(0, len(batch), 16):
                 probs.append(torch.softmax(model(batch[i:i + 16]), dim=1).cpu().numpy())
             prob = np.concatenate(probs)[:, 1]
             return prob.transpose(1, 2, 0) > 0.5
-        volume = torch.from_numpy(case.ct[None, None]).float().to(device)
+        volume = case.ct[None, None].float().to(device)
         prob = sliding_window_inference(volume, patch, 4, model, overlap=0.5)
         return torch.softmax(prob, dim=1)[0, 1].cpu().numpy() > 0.5
 
 
-def dice_score(first: np.ndarray, second: np.ndarray) -> float:
-    first = first.astype(bool)
-    second = second.astype(bool)
+def _as_bool_numpy(x) -> np.ndarray:
+    if torch.is_tensor(x):
+        x = x.detach().cpu().numpy()
+    return np.asarray(x).astype(bool)
+
+
+def dice_score(first, second) -> float:
+    first = _as_bool_numpy(first)
+    second = _as_bool_numpy(second)
     union = int((first | second).sum())
     return 1.0 if union == 0 else 2.0 * int((first & second).sum()) / union
 

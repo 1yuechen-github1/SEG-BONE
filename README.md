@@ -23,8 +23,9 @@ SEG-BONE/
 │   └── monai3d.py            # MONAI 3D 模型
 ├── nnunet/
 │   └── runner.py             # nnU-Net v2 全流程封装
-├── dataset.py                # 数据加载、病例管理、patch 采样
-├── train.py                  # 训练脚本
+├── dataset.py                # 数据加载、病例管理、patch 采样、.pt 缓存
+├── preprocess.py             # 预处理：CT 归一化并缓存为 .pt
+├── train.py                  # 训练脚本（断点续训、按验证集 Dice 保存最佳模型）
 ├── evaluate.py               # 评估脚本（Dice、体积、ICC、滑窗推理）
 ├── ensemble.py               # 多模型集成（多数投票）
 ├── summarize.py              # 汇总各模型指标
@@ -74,20 +75,37 @@ cases-root/
 
 ## 使用方式
 
-### 1. 训练（MONAI / SMP 模型）
+### 1. 预处理（可选，推荐）
+
+首次训练前可把 CT 一次性归一化并缓存为 `.pt`，之后训练/评估/集成都直接读缓存，避免每次重复解压 NIfTI：
+
+```bash
+python preprocess.py \
+  --cases-root /path/to/cases-root \
+  --cache-dir /path/to/cache
+```
+
+- 默认对 CT 做百分位裁剪（0.5%~99.5%）+ z-score 归一化；加 `--no-normalize` 可保留原始 HU 值。
+- 缓存结构：`<cache-dir>/<split>/<case_id>.pt`，内含 `ct / mask / spacing / fg`（`fg` 为前景体素坐标）。
+- 数据变更或想换归一化方式时用 `--refresh` 重建缓存。
+
+### 2. 训练（MONAI / SMP 模型）
 
 ```bash
 python train.py \
   --config configs/unetr.json \
   --cases-root /path/to/cases-root \
-  --output-dir /path/to/output
+  --output-dir /path/to/output \
+  --cache-dir /path/to/cache
 ```
 
-- 训练完成后会在 `output-dir` 下保存模型权重 `<model>.pt`。
-- 训练结束后会自动调用 `evaluate`，对 val / test 集进行评估。
+- 训练结束后在 `output-dir` 下保存 `<model>_best.pt`（验证集 Dice 最高）与 `<model>_last.pt`（最终模型），训练结束自动调用 `evaluate` 评估 val / test 集。
+- 每个 epoch 结束自动在验证集上算 Dice，按验证集 Dice 保存最佳模型。
+- 每个 epoch 保存 `checkpoint_last.pt`（含 `model / optimizer / epoch / best_dice`），中断后加 `--resume` 可断点续训。
+- 每 `--val-every N` 个 epoch 算一次验证集 Dice（默认 1；验证集大或模型重时可调大提速）。
 - 训练期间每个 epoch 采样 `max(64, 病例数 × 8)` 个 batch，3D 模型做随机前景/随机中心 patch 采样，2D/2.5D 模型做随机切片采样。
 
-### 2. 单独评估
+### 3. 单独评估
 
 ```bash
 python evaluate.py \
@@ -100,7 +118,7 @@ python evaluate.py \
 - 2D/2.5D 模型按切片逐层推理；3D 模型使用 MONAI 滑窗推理（overlap=0.5）。
 - 输出：每个病例的预测 `.npy`（保存在 `predictions/<model>/<split>/`），以及指标表 `eval_<model>.csv`（含 Dice、预测体积、真值体积）。
 
-### 3. 多模型集成（多数投票）
+### 4. 多模型集成（多数投票）
 
 ```bash
 python ensemble.py \
@@ -111,7 +129,7 @@ python ensemble.py \
 
 - 读取各模型已保存的 `.npy` 预测结果做逐体素多数投票，输出 `eval_<模型名拼接>.csv`。
 
-### 4. 汇总
+### 5. 汇总
 
 ```bash
 python summarize.py --output-dir /path/to/output
@@ -119,7 +137,7 @@ python summarize.py --output-dir /path/to/output
 
 - 汇总 `output-dir` 下所有 `eval_*.csv`，输出 `summary.csv` 与 `summary.json`（按模型 × val/test 给出样本数、平均 Dice、体积 ICC(3,1)）。
 
-### 5. nnU-Net v2 全流程
+### 6. nnU-Net v2 全流程
 
 ```bash
 python nnunet/runner.py \
